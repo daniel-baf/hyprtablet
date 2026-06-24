@@ -78,8 +78,6 @@ class HyprtabletWindow(Adw.ApplicationWindow):
         self.refresh()
 
     def refresh(self) -> None:
-        self.clear_tablet_rows()
-        self.monitors = []
         self.apply_button.set_sensitive(False)
 
         if not is_hyprland_session():
@@ -87,12 +85,18 @@ class HyprtabletWindow(Adw.ApplicationWindow):
 
         try:
             tablets = list_tablets()
-            self.monitors = list_monitors()
+            monitors = list_monitors()
             current_output = get_current_output()
         except HyprlandError as exc:
+            self.clear_tablet_rows()
+            self.monitors = []
             self.status.set_text(str(exc))
             self.monitor_dropdown.set_model(Gtk.StringList.new([]))
+            self.apply_button.set_sensitive(False)
             return
+
+        self.clear_tablet_rows()
+        self.monitors = monitors
 
         if tablets:
             for tablet in tablets:
@@ -117,11 +121,18 @@ class HyprtabletWindow(Adw.ApplicationWindow):
 
     def on_apply_clicked(self, _button: Gtk.Button) -> None:
         selected = self.monitor_dropdown.get_selected()
+        if not self.monitors or selected == Gtk.INVALID_LIST_POSITION or selected > len(self.monitors):
+            message = "Select a valid output before applying."
+            self.status.set_text(message)
+            self.toast_overlay.add_toast(Adw.Toast(title=message))
+            return
+
         output = None if selected == 0 else self.monitors[selected - 1].name
 
         try:
             apply_output(output)
         except HyprlandError as exc:
+            self.status.set_text(str(exc))
             self.toast_overlay.add_toast(Adw.Toast(title=str(exc)))
             return
 

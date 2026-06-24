@@ -6,6 +6,9 @@ import os
 import subprocess
 
 
+HYPRCTL_TIMEOUT_SECONDS = 2.0
+
+
 class HyprlandError(RuntimeError):
     pass
 
@@ -48,14 +51,32 @@ def run_hyprctl(*args: str) -> str:
             check=True,
             capture_output=True,
             text=True,
+            timeout=HYPRCTL_TIMEOUT_SECONDS,
         )
     except FileNotFoundError as exc:
         raise HyprlandError("hyprctl was not found in PATH.") from exc
+    except subprocess.TimeoutExpired as exc:
+        command = " ".join(("hyprctl", *args))
+        raise HyprlandError(f"{command} timed out after {HYPRCTL_TIMEOUT_SECONDS:g} seconds.") from exc
     except subprocess.CalledProcessError as exc:
         message = exc.stderr.strip() or exc.stdout.strip() or "hyprctl command failed."
         raise HyprlandError(message) from exc
 
     return completed.stdout
+
+
+def _as_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _as_float(value: object, default: float = 1.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 def list_monitors() -> list[Monitor]:
@@ -64,22 +85,29 @@ def list_monitors() -> list[Monitor]:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise HyprlandError("Could not parse hyprctl monitors JSON.") from exc
+    if not isinstance(payload, list):
+        raise HyprlandError("Unexpected hyprctl monitors JSON format.")
 
     monitors: list[Monitor] = []
     for item in payload:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "")
+        if not name:
+            continue
         monitors.append(
             Monitor(
-                name=str(item.get("name", "")),
-                description=str(item.get("description", "")),
-                width=int(item.get("width", 0)),
-                height=int(item.get("height", 0)),
-                x=int(item.get("x", 0)),
-                y=int(item.get("y", 0)),
-                scale=float(item.get("scale", 1.0)),
+                name=name,
+                description=str(item.get("description") or ""),
+                width=_as_int(item.get("width")),
+                height=_as_int(item.get("height")),
+                x=_as_int(item.get("x")),
+                y=_as_int(item.get("y")),
+                scale=_as_float(item.get("scale")),
                 focused=bool(item.get("focused", False)),
             )
         )
-    return [monitor for monitor in monitors if monitor.name]
+    return monitors
 
 
 def list_tablets() -> list[Tablet]:
@@ -88,9 +116,16 @@ def list_tablets() -> list[Tablet]:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise HyprlandError("Could not parse hyprctl devices JSON.") from exc
+    if not isinstance(payload, dict):
+        raise HyprlandError("Unexpected hyprctl devices JSON format.")
 
     tablets: list[Tablet] = []
-    for item in payload.get("tablets", []):
+    raw_tablets = payload.get("tablets", [])
+    if not isinstance(raw_tablets, list):
+        return tablets
+    for item in raw_tablets:
+        if not isinstance(item, dict):
+            continue
         name = str(item.get("name") or item.get("type") or "Unnamed tablet")
         kind = str(item.get("type") or "tablet")
         tablets.append(Tablet(name=name, kind=kind))
@@ -107,5 +142,13 @@ def get_current_output() -> str:
 
 
 def apply_output(output: str | None) -> None:
-    target = output or ""
+    if output is not None:
+        monitor_names = {monitor.name for monitor in list_monitors()}
+        if output not in monitor_names:
+            raise HyprlandError(f"Output is not currently connected: {output}")
+
+    target = output if output is not None else ""
+    if get_current_output() == target:
+        return
+
     run_hyprctl("keyword", "input:tablet:output", target)
