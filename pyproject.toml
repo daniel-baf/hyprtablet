@@ -1,0 +1,16 @@
+[project]
+name = "hyprtablet"
+version = "0.1.0"
+description = "Native GTK utility for mapping graphics tablets to monitors on Hyprland"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Hyprtablet contributors" }]
+dependencies = []
+
+[project.scripts]
+hyprtablet = "hyprtablet.app:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
